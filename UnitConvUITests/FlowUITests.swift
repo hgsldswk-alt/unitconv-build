@@ -1,0 +1,286 @@
+import XCTest
+
+final class FlowUITests: XCTestCase {
+    private struct Language {
+        let id: String
+        let locale: String
+    }
+
+    private let simplified = Language(id: "zh-Hans", locale: "zh_CN")
+    private var languages: [Language] {
+        [simplified, Language(id: "zh-Hant", locale: "zh_TW"), Language(id: "en", locale: "en_US"), Language(id: "ja", locale: "ja_JP")]
+    }
+    private let app = XCUIApplication()
+
+    override func setUp() { continueAfterFailure = false }
+
+    func testAAAWarmUpSimulator() {
+        XCTExpectFailure("云端模拟器首次启动可能超时", strict: false)
+        app.launch()
+        app.terminate()
+    }
+
+    private func launch(_ flags: [String] = [], reset: Bool = true, language: Language? = nil,
+                        input: String? = nil, preset: String? = nil) {
+        let language = language ?? simplified
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(\(language.id))", "-AppleLocale", language.locale]
+            + (reset ? ["-reset"] : []) + flags
+        app.launchEnvironment = [:]
+        if let input { app.launchEnvironment["UNITCONV_INPUT"] = input }
+        if let preset { app.launchEnvironment["UNITCONV_PRESET"] = preset }
+        app.launch()
+        if flags.contains("-paywall") {
+            XCTAssertTrue(app.staticTexts["paywall.title"].waitForExistence(timeout: 8))
+        } else if flags.contains("-import-fixture") {
+            XCTAssertTrue(app.buttons["import.confirm"].waitForExistence(timeout: 8))
+        } else {
+            XCTAssertTrue(app.textFields["input.number"].waitForExistence(timeout: 8))
+        }
+    }
+
+    private func tap(_ id: String, fallback: String? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        func hittable() -> XCUIElement? {
+            let byID = app.buttons.matching(identifier: id).allElementsBoundByIndex
+            if let button = byID.first(where: \.isHittable) { return button }
+            guard let fallback else { return nil }
+            return app.buttons.matching(NSPredicate(format: "label == %@", fallback))
+                .allElementsBoundByIndex.first(where: \.isHittable)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            if let button = hittable() { button.tap(); return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        if let exists = app.buttons.matching(identifier: id).allElementsBoundByIndex.first, exists.exists {
+            exists.tap()
+            return
+        }
+        XCTFail("Missing reachable button: \(id)", file: file, line: line)
+    }
+
+    private func assertResult(_ unit: String, _ value: String, file: StaticString = #filePath, line: UInt = #line) {
+        let label = app.staticTexts["result." + unit]
+        let predicate = NSPredicate(format: "exists == true AND label == %@", value)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: label)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 6), .completed,
+                       "Expected \(value) for \(unit)", file: file, line: line)
+    }
+
+    private func shot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func enter(_ text: String) {
+        let field = app.textFields["input.number"]
+        XCTAssertTrue(field.waitForExistence(timeout: 8))
+        field.tap()
+        for _ in 0..<3 where !(field.value(forKey: "hasKeyboardFocus") as? Bool ?? false) {
+            Thread.sleep(forTimeInterval: 0.5)
+            field.tap()
+        }
+        field.typeText(text)
+    }
+
+    private func sendCard(file: StaticString = #filePath, line: UInt = #line) {
+        let send = app.buttons["share.send"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: send
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 12), .completed,
+                       "Card share button never became ready.\n\(app.debugDescription)", file: file, line: line)
+        send.tap()
+        XCTAssertTrue(app.staticTexts["share.requested"].waitForExistence(timeout: 6),
+                      "Card share was not prepared.\n\(app.debugDescription)", file: file, line: line)
+    }
+
+    func testFreshInstantConversionCopyShareAndRestart() {
+        launch()
+        XCTAssertFalse(app.buttons["home.copy"].isEnabled)
+        enter("250")
+        assertResult("kg", "0.25")
+        assertResult("oz", "8.8185")
+        tap("copy.kg")
+        XCTAssertTrue(app.staticTexts["copy.feedback"].waitForExistence(timeout: 5))
+        tap("home.copy")
+        tap("input.done")
+        tap("home.share")
+        sendCard()
+        app.terminate()
+        launch(reset: false)
+        assertResult("kg", "0.25")
+    }
+
+    func testSwitchGroupSourceSignAndInvalidResult() {
+        launch(input: "20")
+        tap("input.source")
+        tap("source.lb", fallback: "磅 · lb")
+        XCTAssertFalse(app.buttons["home.copy"].isEnabled)
+        app.textFields["input.number"].typeText("20")
+        assertResult("kg", "9.0718")
+        tap("input.done")
+        tap("group.temperature")
+        XCTAssertFalse(app.buttons["home.share"].isEnabled)
+        tap("input.sign")
+        app.textFields["input.number"].typeText("300")
+        XCTAssertTrue(app.staticTexts["input.error"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["home.copy"].isEnabled)
+        tap("input.sign")
+        assertResult("fahrenheit", "572")
+        app.textFields["input.number"].typeText(XCUIKeyboardKey.delete.rawValue)
+        assertResult("fahrenheit", "86")
+        tap("input.done")
+        tap("group.weight")
+        XCTAssertFalse(app.buttons["home.copy"].isEnabled)
+        app.textFields["input.number"].typeText("2")
+        assertResult("kg", "0.9072")
+        tap("input.done")
+        tap("group.speed")
+        XCTAssertTrue(app.staticTexts["result.mph"].exists)
+        tap("input.done")
+        tap("group.volume")
+        XCTAssertTrue(app.staticTexts["result.flOz"].exists)
+    }
+
+    func testCodeAndFileShareThenPasteAndImport() {
+        launch(input: "240")
+        tap("home.share")
+        let codeTab = app.buttons["组合口令"]
+        XCTAssertTrue(codeTab.waitForExistence(timeout: 5))
+        codeTab.tap()
+        tap("share.copyCode")
+        tap("share.send")
+        XCTAssertTrue(app.staticTexts["share.requested"].waitForExistence(timeout: 6))
+        tap("panel.close")
+        tap("home.presets")
+        tap("import.paste", fallback: "粘贴口令")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "import.preview").firstMatch
+            .waitForExistence(timeout: 5))
+        tap("import.cancel")
+        tap("import.paste", fallback: "粘贴口令")
+        tap("import.confirm")
+        assertResult("kg", "0.24")
+        tap("home.presets")
+        XCTAssertEqual(app.buttons.matching(identifier: "preset.use.重量").count, 1)
+    }
+
+    func testFileImportRemainsFreeAfterExpiry() {
+        let json = #"{"version":1,"name":"备料","dimension":"volume","source":"ml","targets":["cup","tbsp"]}"#
+        let encoded = Data(json.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        launch(["-import-fixture", "-expired"], preset: "UC1:" + encoded)
+        tap("import.confirm")
+        enter("240")
+        assertResult("cup", "1.0144")
+        tap("input.done")
+        tap("home.presets")
+        tap("preset.use.备料")
+        assertResult("cup", "1.0144")
+    }
+
+    func testCreateRenameAndEditGateAfterExpiryThenRestore() {
+        launch()
+        tap("home.presets")
+        tap("preset.new")
+        rename(to: "Baking")
+        tap("editor.save")
+        tap("home.presets")
+        tap("preset.edit.Baking")
+        rename(to: "Kitchen")
+        tap("editor.save")
+        tap("home.presets")
+        tap("preset.shortcuts")
+        tap("shortcut.weight.down")
+        tap("panel.close")
+
+        app.terminate()
+        launch(["-expired", "-restore-pro"], reset: false)
+        tap("home.presets")
+        tap("preset.use.Kitchen")
+        enter("500")
+        assertResult("lb", "1.1023")
+        tap("input.done")
+        tap("home.presets")
+        tap("preset.edit.Kitchen")
+        XCTAssertTrue(app.staticTexts["paywall.title"].waitForExistence(timeout: 5))
+        tap("paywall.restore")
+        XCTAssertTrue(app.staticTexts["paywall.message"].waitForExistence(timeout: 5))
+        tap("panel.close")
+        tap("home.presets")
+        tap("preset.edit.Kitchen")
+        XCTAssertTrue(app.textFields["editor.name"].waitForExistence(timeout: 5))
+    }
+
+    private func rename(to name: String) {
+        let field = app.textFields["editor.name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let current = field.value as? String ?? ""
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + name)
+        XCTAssertEqual(field.value as? String, name)
+    }
+
+    func testMilestoneFromShareAndSettings() {
+        launch(["-usage-days", "7"], input: "250")
+        tap("home.share")
+        tap("share.milestone", fallback: "使用小结")
+        sendCard()
+        tap("panel.close")
+        tap("home.presets")
+        tap("preset.settings")
+        tap("settings.milestone")
+        XCTAssertTrue(app.staticTexts["已经用它换算了 7 天。"].waitForExistence(timeout: 5))
+    }
+
+    func testStoreScreenshots() { storeShots(languages[0]) }
+    func testStoreScreenshotsHant() { storeShots(languages[1]) }
+    func testStoreScreenshotsEn() { storeShots(languages[2]) }
+    func testStoreScreenshotsJa() { storeShots(languages[3]) }
+
+    private func storeShots(_ language: Language) {
+        do {
+            launch(language: language, input: "250")
+            assertResult("kg", "0.25")
+            shot("store-\(language.id)-01-home")
+            app.terminate()
+
+            launch(["-group", "volume"], language: language, input: "240")
+            assertResult("cup", "1.0144")
+            app.terminate()
+            launch(reset: false, language: language)
+            assertResult("cup", "1.0144")
+            shot("store-\(language.id)-02-volume")
+            app.terminate()
+
+            launch(["-group", "temperature", "-source", "fahrenheit"], language: language)
+            enter("350")
+            assertResult("celsius", "176.6667")
+            XCTAssertTrue(app.keyboards.firstMatch.exists)
+            shot("store-\(language.id)-03-temperature")
+            app.terminate()
+
+            launch(["-group", "speed", "-source", "mph"], language: language, input: "65")
+            assertResult("kmh", "104.6074")
+            shot("store-\(language.id)-04-speed")
+            app.terminate()
+
+            launch(language: language, input: "500")
+            tap("home.share")
+            XCTAssertTrue(app.buttons["share.send"].waitForExistence(timeout: 5))
+            shot("store-\(language.id)-05-share")
+            app.terminate()
+        }
+    }
+
+    func testPaywallScreenshot() {
+        launch(["-paid-mode", "-paywall"])
+        XCTAssertTrue(app.staticTexts["paywall.title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["paywall.trial"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["paywall.restore"].exists)
+        shot("paid-01-paywall")
+    }
+}

@@ -1,0 +1,90 @@
+name: UnitConv
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: zh-Hans
+  knownRegions: [zh-Hans, en, zh-Hant, ja, de, es, fr, pt-BR, ko, it, nl]
+settings:
+  base:
+    APP_ID: com.hgsldswk.unitconv
+    APP_STORE_ID: "6837218239"
+    MARKETING_VERSION: "1.0.2"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  UnitConv:
+    type: application
+    platform: iOS
+    sources: [UnitConv, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID)
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG"
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: UnitConv AppStore
+    info:
+      path: UnitConv/Info.plist
+      properties:
+        CFBundleDisplayName: 单位换算
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        UnitConvProProductID: $(APP_ID).pro
+        UnitConvTrialProductID: $(APP_ID).trial
+        APP_STORE_ID: $(APP_STORE_ID)
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.hgsldswk.unitconv.preset
+            UTTypeConformsTo: [public.json]
+            UTTypeTagSpecification:
+              public.filename-extension: [unitpreset]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: UnitConv Preset
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.hgsldswk.unitconv.preset]
+  UnitConvTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [UnitConvTests, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).tests
+        GENERATE_INFOPLIST_FILE: YES
+  UnitConvUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UnitConvUITests]
+    dependencies:
+      - target: UnitConv
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: UnitConv
+schemes:
+  UnitConv:
+    build:
+      targets:
+        UnitConv: all
+        UnitConvTests: [test]
+    test:
+      config: Debug
+      targets: [UnitConvTests]
+  UnitConvUI:
+    build:
+      targets:
+        UnitConv: all
+        UnitConvUITests: [test]
+    test:
+      config: Debug
+      targets: [UnitConvUITests]
